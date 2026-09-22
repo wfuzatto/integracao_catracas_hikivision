@@ -41,3 +41,43 @@ O cadastro existente de Wesley foi registrado e associado ao segmento ENTRADA AC
 Consultas ISAPI diretas confirmaram a mesma pessoa nas controladoras 192.168.104.12, .13, .14 e .15, com uma face, uma credencial e validade de 20/09/2026 08:00 até 23:59.
 A repetição do envio manteve um único registro de visita no HikCentral.
 Não foi realizado comando de abertura nem teste presencial de passagem.
+
+
+## Integração com AcquaVale Vendas
+
+Esta versão recebe automaticamente as vendas pagas do `acquavale_vendas` sem alterar o fluxo atual de checkout do Visitor.
+
+Fluxo:
+
+1. O site confirma o pagamento e envia um webhook HMAC para `acquavale_receive.php`.
+2. O Vale Visitor persiste pedido e tickets e responde rapidamente; o receiver não espera o HikCentral.
+3. `source_ticket_code` é a chave idempotente: reenvios/reinícios não criam outro visitante.
+4. A foto é baixada por HTTPS com Bearer API key e salva em `storage/private/acquavale_faces/`; não é BLOB no MySQL.
+5. O ticket cria uma reserva local `REGISTERED` no grupo `Day use`, com `ENTRADA ACQUAVALE` + `SAIDA ACQUAVALE` e validade do ingresso.
+6. `acquavale_worker.php` reutiliza o `visitor_sync()` desta versão, incluindo a criação no HikCentral, face, access levels, reaplicação e o double check por catraca.
+7. Somente `hcp_delivery_state=confirmed` gera `sale-ticket-status=confirmed` no site.
+8. Quando todos os tickets do pedido estão confirmados, o worker envia `sale-ack`.
+9. O checkout manual/automático existente permanece separado. Vendas online entram como `REGISTERED`; nenhum check-in é forçado durante a importação.
+
+Configuração privada em `config.local.php`:
+
+```php
+putenv('VALE_AQV_WEB_BASE_URL=https://SEU-DOMINIO/sites/acquavale/public_html');
+putenv('VALE_AQV_API_KEY=API_KEY_DO_ACQUAVALE_VENDAS');
+putenv('VALE_AQV_SHARED_SECRET=SEGREDO_HMAC_IGUAL_NOS_DOIS_SISTEMAS');
+putenv('VALE_AQV_WEB_TLS_VERIFY=1');
+putenv('VALE_AQV_SIGNATURE_MAX_SKEW=300');
+putenv('VALE_AQV_PROCESS_ON_RECEIVE=0');
+```
+
+Aplique `migrations/20260922_acquavale_sales_bridge.sql` em instalações existentes. Para retries automáticos no Windows, execute como Administrador:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\xampp\htdocs\visitor\scripts\install_acquavale_task.ps1
+```
+
+A tarefa `ValeVisitor-AcquaValeSync` roda a cada minuto e pode coexistir com o coletor de auto-checkout, que tem responsabilidade diferente.
+
+### Firewall
+
+Não exponha o HikCentral. Publique somente `acquavale_receive.php` em HTTPS no Vale Visitor. Recomenda-se TCP 443; se a WAN 443 estiver ocupada, use por exemplo TCP 8443 externo com NAT para TCP 443 interno. Restrinja as demais páginas à LAN sempre que possível.

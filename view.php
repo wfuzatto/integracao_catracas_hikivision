@@ -40,6 +40,9 @@ include __DIR__ . '/header.php';
             <dt>Saída</dt><dd><?= e(date('d/m/Y H:i', strtotime($r['exit_at']))) ?></dd>
             <dt>Documento</dt><dd><?= e(trim(($r['document_type'] ?? '') . ' ' . ($r['document_number'] ?? ''))) ?></dd>
             <dt>E-mail / telefone</dt><dd><?= e(trim(($r['email'] ?? '') . ' · ' . ($r['phone'] ?? ''))) ?></dd>
+            <?php if (($r['source_system'] ?? '') === 'acquavale_vendas'): ?>
+            <dt>Pedido AcquaVale</dt><dd><?= e((string)($r['source_order_code'] ?? '')) ?> · Ticket <?= e((string)($r['source_ticket_code'] ?? '')) ?></dd>
+            <?php endif; ?>
         </dl>
 
         <?php if ($r['status'] !== 'SENT' && $r['status'] !== 'ACTIVE'): ?>

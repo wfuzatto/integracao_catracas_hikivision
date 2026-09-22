@@ -1,0 +1,32 @@
+name: Assemble sanitized Visitor source
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - source_chunks/ready
+
+permissions:
+  contents: write
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble and expand source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat source_chunks/part-* | tr -d '\n\r' | base64 -d > /tmp/visitor_aligned.zip
+          rm -rf /tmp/visitor-source
+          mkdir -p /tmp/visitor-source
+          unzip -q /tmp/visitor_aligned.zip -d /tmp/visitor-source
+          test -d /tmp/visitor-source/visitor
+          rsync -a --delete             --exclude='.git/'             --exclude='.github/workflows/bootstrap-chunks.yml'             --exclude='.github/workflows/bootstrap-source.yml'             --exclude='source_chunks/'             --exclude='config.local.php'             --exclude='uploads/faces/*.png'             --exclude='uploads/qr/*'             --exclude='storage/logs/*'             /tmp/visitor-source/visitor/ ./
+          rm -rf source_chunks
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: import aligned Vale Visitor source"
+          git push

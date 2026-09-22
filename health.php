@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__ . '/hcp.php';
+require_once __DIR__ . '/acquavale.php';
 $pageTitle = 'Integração';
 $mapped = count(HCP_ACCESS_LEVEL_MAP);
 include __DIR__ . '/header.php';
@@ -28,6 +28,11 @@ include __DIR__ . '/header.php';
         <strong>Access levels</strong>
         <span class="muted"><?= (int)$mapped ?> mapeado(s) no aplicativo</span>
     </div>
+    <div class="integration-row">
+        <span class="dot <?= aqv_configured() ? 'good' : 'warn' ?>"></span>
+        <strong>AcquaVale Vendas</strong>
+        <span class="muted"><?= aqv_configured() ? 'webhook, fotos e callback configurados' : 'integração ainda não configurada' ?></span>
+    </div>
 
     <div class="notice">
         <strong>Fluxo:</strong> salvar reserva local → enviar ao HikCentral → criar reserva oficial com foto e validade → aplicar access level → receber o QR Code oficial.
@@ -36,5 +41,8 @@ include __DIR__ . '/header.php';
         <strong>Importante:</strong> o login <code>admin</code> do Web Client não substitui AppKey/AppSecret. O OpenAPI precisa estar habilitado/licenciado no HikCentral; na verificação anterior o servidor respondeu código 217.
     </div>
     <p class="muted">Arquivo de configuração: <code>config.local.php</code>. Use <code>config.local.example.php</code> como modelo. Não coloque a senha do administrador nesse arquivo.</p>
+    <div class="notice">
+        <strong>Vendas online:</strong> o receiver persiste primeiro; o worker reutiliza <code>visitor_sync()</code>, aguarda a confirmação de face/credencial nas catracas e só então envia o ACK ao site. O checkout e o auto-checkout continuam em fluxo separado.
+    </div>
 </section>
 <?php include __DIR__ . '/footer.php'; ?>
