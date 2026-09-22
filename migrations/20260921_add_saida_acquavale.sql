@@ -1,0 +1,2 @@
+UPDATE access_levels SET name = 'SAIDA ACQUAVALE' WHERE name = 'SAIDA AQCUAVALE';
+INSERT IGNORE INTO access_levels (name) VALUES ('SAIDA ACQUAVALE');
