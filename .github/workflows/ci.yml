@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  php-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: curl, pdo_mysql, fileinfo
+      - name: Lint PHP
+        run: find . -type f -name '*.php' ! -name 'config.local.php' -print0 | xargs -0 -n1 php -l
+      - name: Verify AcquaVale bridge files
+        run: |
+          test -f acquavale.php
+          test -f acquavale_receive.php
+          test -f acquavale_worker.php
+          test -f acquavale_imports.php
+          test -f migrations/20260922_acquavale_sales_bridge.sql
+          test -f scripts/install_acquavale_task.ps1
