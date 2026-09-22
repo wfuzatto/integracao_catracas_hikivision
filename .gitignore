@@ -1,0 +1,10 @@
+config.local.php
+/storage/logs/*
+!/storage/.htaccess
+/private/acquavale_faces/*
+!/private/.htaccess
+/uploads/faces/*
+!/uploads/faces/.htaccess
+/uploads/qr/*
+*.log
+.DS_Store
