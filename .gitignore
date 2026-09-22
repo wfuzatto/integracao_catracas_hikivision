@@ -7,4 +7,5 @@ config.local.php
 /uploads/faces/normalized/*
 /uploads/qr/*
 *.log
+visitor_app.sql
 .DS_Store
