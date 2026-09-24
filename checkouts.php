@@ -39,7 +39,7 @@ include __DIR__ . '/header.php';
         <input type="hidden" name="enabled" value="<?= $enabled ? '0' : '1' ?>">
         <button class="button <?= $enabled ? '' : 'primary' ?>" type="submit"><?= $enabled ? 'Desativar coletor' : 'Ativar coletor' ?></button>
     </form>
-    <div class="notice">Para execução automática no XAMPP/Windows, crie uma tarefa no Agendador de Tarefas para rodar a cada 5 minutos:<br><code>C:\xampp\php\php.exe <?= e(__DIR__ . DIRECTORY_SEPARATOR . 'auto_checkout_collector.php') ?></code></div>
+    <div class="notice">Para execução automática no XAMPP/Windows, execute <code>scripts\install_auto_checkout_task.ps1</code> uma vez como administrador. A tarefa separada <code>ValeVisitor-AutoCheckout</code> roda a cada 5 minutos:<br><code>C:\xampp\php\php.exe <?= e(__DIR__ . DIRECTORY_SEPARATOR . 'auto_checkout_collector.php') ?></code></div>
 </section>
 
 <section class="card table-wrap" style="margin-top:20px">

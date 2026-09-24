@@ -1,5 +1,14 @@
 <?php
 require_once __DIR__ . '/acquavale.php';
+$aqvPending = 0;
+$aqvFailed = 0;
+$aqvLastWorker = null;
+try {
+    $aqvPending = (int)db()->query("SELECT COUNT(*) FROM acquavale_import_orders WHERE state IN ('received','processing')")->fetchColumn();
+    $aqvFailed = (int)db()->query("SELECT COUNT(*) FROM acquavale_import_orders WHERE state='failed'")->fetchColumn();
+    $aqvLastWorker = db()->query('SELECT MAX(last_attempt_at) FROM acquavale_import_orders')->fetchColumn() ?: null;
+} catch (Throwable) {
+}
 $pageTitle = 'Integração';
 $mapped = count(HCP_ACCESS_LEVEL_MAP);
 include __DIR__ . '/header.php';
@@ -34,6 +43,21 @@ include __DIR__ . '/header.php';
         <span class="muted"><?= aqv_configured() ? 'webhook, fotos e callback configurados' : 'integração ainda não configurada' ?></span>
     </div>
 
+    <div class="integration-row">
+        <span class="dot <?= hcp_configured() ? 'good' : 'warn' ?>"></span>
+        <strong>HikCentral</strong>
+        <span class="muted"><?= hcp_configured() ? 'configurado; conectividade validada durante a entrega' : 'OFFLINE/sem credenciais OpenAPI' ?></span>
+    </div>
+    <div class="integration-row">
+        <span class="dot <?= $aqvLastWorker !== null ? 'good' : 'warn' ?>"></span>
+        <strong>Worker AcquaVale</strong>
+        <span class="muted"><?= e($aqvLastWorker ?: 'nao executado') ?> · pendentes: <?= (int)$aqvPending ?> · falhas: <?= (int)$aqvFailed ?></span>
+    </div>
+    <div class="integration-row">
+        <span class="dot <?= auto_checkout_enabled() ? 'good' : 'warn' ?>"></span>
+        <strong>Checkouts automaticos</strong>
+        <span class="muted"><?= auto_checkout_enabled() ? 'ATIVO' : 'DESATIVADO' ?> · processo separado do worker AcquaVale</span>
+    </div>
     <div class="notice">
         <strong>Fluxo:</strong> salvar reserva local → enviar ao HikCentral → criar reserva oficial com foto e validade → aplicar access level → receber o QR Code oficial.
     </div>

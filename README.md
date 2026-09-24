@@ -70,13 +70,17 @@ putenv('VALE_AQV_SIGNATURE_MAX_SKEW=300');
 putenv('VALE_AQV_PROCESS_ON_RECEIVE=0');
 ```
 
-Aplique `migrations/20260922_acquavale_sales_bridge.sql` em instalações existentes. Para retries automáticos no Windows, execute como Administrador:
+Aplique `migrations/20260922_acquavale_sales_bridge.sql` em instalações existentes. Para retries automáticos no Windows, execute:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File C:\xampp\htdocs\visitor\scripts\install_acquavale_task.ps1
 ```
 
-A tarefa `ValeVisitor-AcquaValeSync` roda a cada minuto e pode coexistir com o coletor de auto-checkout, que tem responsabilidade diferente.
+A tarefa `ValeVisitor-AcquaValeSync` roda a cada minuto e pode coexistir com o coletor de auto-checkout, que tem responsabilidade diferente. O instalador usa o usuário atual, sem exigir administrador; esse usuário precisa estar conectado ao Windows. O processo roda com a janela oculta. O resultado da última execução fica em `storage/logs/acquavale-worker-last.json` e os erros PHP em `storage/logs/acquavale-worker-last-error.log`.
+
+O worker e o botão **Sincronizar agora** também consultam `sale-next` na loja configurada antes de processar os pedidos locais. Isso recupera vendas quando o webhook não chega ao servidor, sem exigir uma conexão de entrada pela internet. Configure a URL e a API key da **loja de produção**, não da cópia local. Pedidos já marcados como `claimed` ficam disponíveis após o prazo de claim da loja (normalmente 10 minutos). Reenvios usam o mesmo código de ingresso e não criam outra reserva. A falha na consulta da loja é exibida na tela e não impede o processamento de pedidos já recebidos.
+
+Teste de regressão local, sem chamadas à loja ou ao HikCentral: `C:\xampp\php\php.exe C:\xampp\htdocs\visitor\scripts\test_acquavale_import.php`. O teste cria registros identificados por um código único e os remove ao terminar.
 
 ### Firewall
 

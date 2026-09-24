@@ -50,7 +50,14 @@ aqv_ensure_schema();
 
 function aqv_configured(): bool
 {
-    return AQV_SHARED_SECRET !== '' && AQV_WEB_BASE_URL !== '' && AQV_WEB_API_KEY !== '';
+    $parts = parse_url(AQV_WEB_BASE_URL);
+    return AQV_SHARED_SECRET !== ''
+        && strlen(AQV_SHARED_SECRET) >= 32
+        && AQV_WEB_BASE_URL !== ''
+        && AQV_WEB_API_KEY !== ''
+        && is_array($parts)
+        && in_array(strtolower((string)($parts['scheme'] ?? '')), ['http','https'], true)
+        && trim((string)($parts['host'] ?? '')) !== '';
 }
 
 function aqv_json_response(array $payload, int $status = 200): never
@@ -101,6 +108,20 @@ function aqv_accept_payload(array $payload, string $deliveryId): int
     $tickets = $order['tickets'] ?? null;
     if ($orderCode === '' || $claim === '' || !is_array($tickets) || !$tickets) {
         throw new InvalidArgumentException('Pedido incompleto.');
+    }
+    $reservation = is_array($order['reservation'] ?? null) ? $order['reservation'] : [];
+    $checkin = trim((string)($reservation['checkin'] ?? ''));
+    $checkout = trim((string)($reservation['checkout'] ?? ''));
+    $checkinDate = $checkin !== '' ? DateTimeImmutable::createFromFormat('!Y-m-d', $checkin) : null;
+    $checkoutDate = $checkout !== '' ? DateTimeImmutable::createFromFormat('!Y-m-d', $checkout) : null;
+    if ($checkin !== '' && (!$checkinDate || $checkinDate->format('Y-m-d') !== $checkin)) {
+        throw new InvalidArgumentException('Data de check-in invalida.');
+    }
+    if ($checkout !== '' && (!$checkoutDate || $checkoutDate->format('Y-m-d') !== $checkout)) {
+        throw new InvalidArgumentException('Data de check-out invalida.');
+    }
+    if ($checkin !== '' && $checkout !== '' && $checkout < $checkin) {
+        throw new InvalidArgumentException('O check-out nao pode ser anterior ao check-in.');
     }
 
     $pdo = db();
@@ -164,13 +185,20 @@ function aqv_accept_payload(array $payload, string $deliveryId): int
             if (!is_array($ticket)) continue;
             $ticketCode = trim((string)($ticket['ticket_code'] ?? ''));
             if ($ticketCode === '') throw new InvalidArgumentException('Ticket sem código.');
+            $validFrom = trim((string)($ticket['valid_from'] ?? ''));
+            $validTo = trim((string)($ticket['valid_to'] ?? ''));
+            $fromDate = DateTimeImmutable::createFromFormat('!Y-m-d', $validFrom);
+            $toDate = DateTimeImmutable::createFromFormat('!Y-m-d', $validTo);
+            if (!$fromDate || $fromDate->format('Y-m-d') !== $validFrom || !$toDate || $toDate->format('Y-m-d') !== $validTo || $validTo < $validFrom) {
+                throw new InvalidArgumentException('Validade do ticket invalida.');
+            }
             $ticketInsert->execute([
                 $importOrderId,
                 $ticketCode,
                 (string)($ticket['visitor_id'] ?? '') ?: null,
                 trim((string)($ticket['product_name'] ?? '')) ?: null,
-                trim((string)($ticket['valid_from'] ?? '')),
-                trim((string)($ticket['valid_to'] ?? '')),
+                $validFrom,
+                $validTo,
                 trim((string)($ticket['photo_url'] ?? '')) ?: null,
             ]);
         }
@@ -222,6 +250,8 @@ function aqv_download_photo(string $url, string $ticketCode): array
     if (strlen($body) < 100 || strlen($body) > AQV_MAX_PHOTO_BYTES) throw new RuntimeException('Tamanho de foto inválido.');
 
     $mime = trim(explode(';', $contentType)[0]);
+    $detectedMime = (new finfo(FILEINFO_MIME_TYPE))->buffer($body);
+    if ($detectedMime !== $mime) throw new RuntimeException('Conteudo de foto invalido.');
     $ext = ['image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp'][$mime] ?? null;
     if (!$ext) throw new RuntimeException('Formato de foto não suportado: ' . $mime);
 
@@ -281,7 +311,7 @@ function aqv_create_local_reservation(array $ticket, array $visitor, string $ord
         $st = $pdo->prepare(
             "INSERT INTO reservations
              (first_name,last_name,email,phone,group_id,access_level_id,entry_at,exit_at,document_type,document_number,gender,photo_path,qr_token,qr_payload,visitor_flow_status,source_system,source_order_code,source_ticket_code)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'REGISTERED','acquavale_vendas',?,?,?)"
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'REGISTERED','acquavale_vendas',?,?)"
         );
         $st->execute([
             trim((string)($visitor['first_name'] ?? '')),
@@ -442,14 +472,19 @@ function aqv_process_order(int $importOrderId): array
         $st = $pdo->prepare("SELECT id FROM acquavale_import_tickets WHERE import_order_id=? AND state NOT IN ('confirmed','acked') ORDER BY id");
         $st->execute([$importOrderId]);
         $results=[];
+        $errors=[];
         foreach ($st->fetchAll() as $ticket) {
             try { $results[] = aqv_process_ticket((int)$ticket['id']); }
-            catch (Throwable $e) { $results[]=['state'=>'failed','error'=>$e->getMessage()]; }
+            catch (Throwable $e) {
+                $errors[]=['ticket_id'=>(int)$ticket['id'],'error'=>$e->getMessage()];
+                $results[]=['state'=>'failed','error'=>$e->getMessage()];
+            }
         }
         $final = aqv_finalize_order($importOrderId);
-        $state = !empty($final['acked']) ? 'acked' : 'processing';
-        $pdo->prepare('UPDATE acquavale_import_orders SET state=?,updated_at=NOW() WHERE id=?')->execute([$state,$importOrderId]);
-        return ['ok'=>true,'tickets'=>$results,'final'=>$final];
+        $state = !empty($final['acked']) ? 'acked' : ($errors ? 'failed' : 'processing');
+        $message = $errors ? mb_substr(implode(' | ', array_column($errors, 'error')), 0, 2000) : null;
+        $pdo->prepare('UPDATE acquavale_import_orders SET state=?,last_error=?,updated_at=NOW() WHERE id=?')->execute([$state,$message,$importOrderId]);
+        return ['ok'=>!$errors,'tickets'=>$results,'final'=>$final,'errors'=>$errors];
     } finally {
         $pdo->prepare('SELECT RELEASE_LOCK(?)')->execute(['aqv_import_' . $importOrderId]);
     }
@@ -462,8 +497,59 @@ function aqv_process_pending(int $limit = 20): array
     $result=['processed'=>0,'acked'=>0,'errors'=>[]];
     foreach ($rows as $row) {
         $result['processed']++;
-        try { $r=aqv_process_order((int)$row['id']); if (!empty($r['final']['acked'])) $result['acked']++; }
+        try {
+            $r=aqv_process_order((int)$row['id']);
+            if (!empty($r['final']['acked'])) $result['acked']++;
+            foreach (($r['errors'] ?? []) as $error) $result['errors'][]=['id'=>(int)$row['id']]+$error;
+        }
         catch (Throwable $e) { $result['errors'][]=['id'=>(int)$row['id'],'error'=>$e->getMessage()]; }
     }
     return $result;
+}
+
+// Recupera vendas mesmo quando o webhook nao consegue chegar a rede local.
+function aqv_pull_sales(int $limit = 20): array
+{
+    $result = ['received'=>0, 'orders'=>[]];
+    for ($i = 0; $i < max(1, min(100, $limit)); $i++) {
+        $response = aqv_site_post('sale-next', ['consumer'=>'vale-visitor']);
+        if (!array_key_exists('sale', $response)) {
+            throw new RuntimeException('A loja retornou uma resposta sem o campo sale.');
+        }
+        if ($response['sale'] === null) break;
+        if (!is_array($response['sale'])) throw new RuntimeException('Venda retornada pela loja invalida.');
+        $sale = $response['sale'];
+        $payload = ['version'=>1, 'event'=>'sale.paid', 'consumer'=>'vale-visitor', 'order'=>$sale];
+        $deliveryId = hash('sha256', (string)($sale['order_code'] ?? '') . "\n" . (string)($sale['claim_token'] ?? ''));
+        $id = aqv_accept_payload($payload, $deliveryId);
+        $result['received']++;
+        $result['orders'][] = $id;
+    }
+    return $result;
+}
+
+function aqv_sync_sales(int $limit = 20): array
+{
+    $pdo = db();
+    $lock = $pdo->query("SELECT GET_LOCK('aqv_sales_sync',0)");
+    if ((int)$lock->fetchColumn() !== 1) {
+        return ['received'=>0, 'processed'=>0, 'acked'=>0, 'errors'=>[], 'locked'=>true];
+    }
+    try {
+        $received = 0;
+        $errors = [];
+        try {
+            $pull = aqv_pull_sales($limit);
+            $received = $pull['received'];
+        } catch (Throwable $e) {
+            $errors[] = ['stage'=>'receive', 'error'=>$e->getMessage()];
+        }
+        // Uma indisponibilidade da loja nao impede retries de vendas ja salvas.
+        $result = aqv_process_pending($limit);
+        $result['received'] = $received;
+        $result['errors'] = array_merge($errors, $result['errors']);
+        return $result;
+    } finally {
+        $pdo->query("SELECT RELEASE_LOCK('aqv_sales_sync')");
+    }
 }

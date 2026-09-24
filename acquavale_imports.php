@@ -5,8 +5,14 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
     csrf_check();
     try {
         $id=(int)($_POST['id']??0);
-        if ($id>0) $result=aqv_process_order($id); else $result=aqv_process_pending(20);
-        flash(!empty($result['final']['acked']) || !empty($result['acked']) ? 'Sincronização concluída e ACK enviado.' : 'Sincronização executada. Consulte os estados abaixo.');
+        if ($id>0) $result=aqv_process_order($id); else $result=aqv_sync_sales(20);
+        if (!empty($result['errors'])) {
+            flash('Falha na sincronização: '.implode(' | ', array_unique(array_column($result['errors'], 'error'))), 'error');
+        } elseif (!empty($result['locked'])) {
+            flash('Uma sincronização já está em andamento. Aguarde e atualize esta página.');
+        } else {
+            flash(!empty($result['final']['acked']) || !empty($result['acked']) ? 'Sincronização concluída e ACK enviado.' : 'Sincronização executada. Consulte os estados abaixo.');
+        }
     } catch(Throwable $e) { flash($e->getMessage(),'error'); }
     redirect('acquavale_imports.php');
 }
