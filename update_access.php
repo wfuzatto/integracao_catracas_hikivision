@@ -7,6 +7,7 @@ try {
     $report=visitor_sync($id);
     flash($report['state']==='confirmed'
         ? 'HikCentral confirmou as credenciais nas '.count($report['doors']).' catracas do segmento '.$report['segment'].'.'
-        : 'Visita registrada. Aguardando confirmacao de entrega nas catracas selecionadas.');
+        : ($report['message'] ?? 'Aguardando confirmacao de entrega nas catracas selecionadas.'),
+        $report['state']==='failed' ? 'error' : 'success');
 } catch(Throwable $e) { flash($e->getMessage(),'error'); }
 redirect('view.php?id='.$id);

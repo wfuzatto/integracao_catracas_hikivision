@@ -16,6 +16,8 @@ if (!$r) {
     http_response_code(404);
     exit('Reserva não encontrada.');
 }
+$isOnlineReservation = ($r['source_system'] ?? '') === 'acquavale_vendas';
+$onlinePhotoFile = $isOnlineReservation ? reservation_face_photo_file($r['photo_path'] ?? null) : null;
 $pageTitle = 'Reserva #' . $r['id'];
 include __DIR__ . '/header.php';
 ?>
@@ -44,6 +46,20 @@ include __DIR__ . '/header.php';
             <dt>Pedido AcquaVale</dt><dd><?= e((string)($r['source_order_code'] ?? '')) ?> · Ticket <?= e((string)($r['source_ticket_code'] ?? '')) ?></dd>
             <?php endif; ?>
         </dl>
+
+        <?php if ($isOnlineReservation): ?>
+        <section class="online-photo-panel">
+            <h2>Foto da venda online</h2>
+            <?php if ($onlinePhotoFile !== null): ?>
+            <a href="reservation_photo.php?id=<?= (int)$r['id'] ?>" target="_blank" rel="noopener">
+                <img class="online-reservation-photo" src="reservation_photo.php?id=<?= (int)$r['id'] ?>" alt="Foto recebida do AcquaVale Vendas">
+            </a>
+            <span class="status active"><?= str_starts_with(basename((string)$r['photo_path']), 'corrected-') ? 'Foto corrigida no atendimento local' : 'Foto integrada do online' ?></span>
+            <?php else: ?>
+            <div class="notice error-box">Esta reserva veio do AcquaVale Vendas, mas a foto ainda não está disponível no servidor local.</div>
+            <?php endif; ?>
+        </section>
+        <?php endif; ?>
 
         <?php if ($r['status'] !== 'SENT' && $r['status'] !== 'ACTIVE'): ?>
         <form action="send.php" method="post" class="actions">
@@ -121,19 +137,20 @@ include __DIR__ . '/header.php';
     </section>
 </div>
 <?php $delivery = json_decode($r['hcp_delivery_report'] ?? '', true); ?>
-<?php if (is_array($delivery) && !empty($delivery['doors'])): ?>
+<?php if (!empty($r['hcp_visitor_id'])): ?>
 <section class="card" style="margin-top:20px">
     <h2>Entrega nas catracas</h2>
     <p><?= e($delivery['segment'] ?? $r['access_name']) ?> · Confirmação do HikCentral</p>
     <table>
-        <thead><tr><th>Catraca</th><th>Entrega</th><th>Face</th><th>Credencial</th></tr></thead>
+        <thead><tr><th>Catraca</th><th>Entrega</th><th>Face</th><th>Credencial</th><th>Diagnóstico</th></tr></thead>
         <tbody>
-        <?php foreach ($delivery['doors'] as $door): ?>
+        <?php foreach (($delivery['doors'] ?? []) as $door): ?>
             <tr>
                 <td><?= e($door['name']) ?></td>
                 <td><?= e(['confirmed'=>'Confirmada','queued'=>'Aguardando','failed'=>'Falhou'][$door['state']] ?? 'Aguardando') ?></td>
-                <td><?= !empty($door['face']) ? 'Confirmada' : 'Pendente' ?></td>
-                <td><?= !empty($door['credential']) ? 'Confirmada' : 'Pendente' ?></td>
+                <td><?= ($door['faceState'] ?? '') === 'failed' ? 'Recusada' : (!empty($door['face']) ? 'Confirmada' : 'Pendente') ?></td>
+                <td><?= ($door['credentialState'] ?? '') === 'failed' ? 'Recusada' : (!empty($door['credential']) ? 'Confirmada' : 'Pendente') ?></td>
+                <td><?= e($door['message'] ?? '') ?></td>
             </tr>
         <?php endforeach; ?>
         </tbody>

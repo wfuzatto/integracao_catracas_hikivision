@@ -33,6 +33,19 @@ include __DIR__.'/header.php';
 </tr>
 <?php $ts=db()->prepare('SELECT t.*,r.hcp_visitor_id,r.hcp_reference,r.hcp_delivery_state FROM acquavale_import_tickets t LEFT JOIN reservations r ON r.id=t.local_reservation_id WHERE t.import_order_id=? ORDER BY t.id');$ts->execute([$o['id']]); foreach($ts->fetchAll() as $t):?>
 <tr><td style="padding-left:34px"><strong><?=e($t['ticket_code'])?></strong><small><?=e($t['product_name']??'')?></small></td><td><?= $t['local_reservation_id'] ? '#'.(int)$t['local_reservation_id'] : '—' ?></td><td><small>HCP Visitor <?=e($t['hcp_visitor_id']??'—')?><br>Ref <?=e($t['hcp_reference']??'—')?></small></td><td><span class="status <?=e(in_array($t['state'],['confirmed','acked'],true)?'active':($t['state']==='failed'?'error':'pending'))?>"><?=e($t['state'])?></span></td><td><?=e($t['last_attempt_at']?date('d/m/Y H:i:s',strtotime($t['last_attempt_at'])):'—')?></td><td><small><?=e($t['last_error']??'')?></small></td><td><?php if($t['local_reservation_id']):?><a class="link" href="view.php?id=<?=(int)$t['local_reservation_id']?>">Abrir</a><?php endif;?></td></tr>
+<?php if (!in_array($t['state'], ['confirmed','acked'], true)): ?>
+<tr><td colspan="7">
+<form method="post" action="replace_online_photo.php" enctype="multipart/form-data" class="actions">
+    <input type="hidden" name="csrf" value="<?=e(csrf_token())?>">
+    <input type="hidden" name="ticket_id" value="<?=(int)$t['id']?>">
+    <label>Corrigir foto do ingresso <?=e($t['ticket_code'])?>
+        <input type="file" name="photo" accept="image/jpeg,image/png" required>
+        <small>Foto atual do próprio visitante, de frente, com o rosto visível e fundo simples. JPG/PNG até 5 MB.</small>
+    </label>
+    <button type="submit" class="button">Salvar foto e tentar novamente</button>
+</form>
+</td></tr>
+<?php endif; ?>
 <?php endforeach;?>
 <?php endforeach;?>
 </tbody></table></div>

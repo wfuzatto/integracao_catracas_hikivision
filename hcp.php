@@ -37,11 +37,13 @@ function hcp_face_image_path(string $path): string
     if (!is_file($absolute)) return $absolute;
     $info = getimagesize($absolute);
     $mime = $info['mime'] ?? '';
-    if ($mime === 'image/jpeg') return $absolute;
+    if (!in_array($mime, ['image/jpeg','image/png'], true)) {
+        throw new HcpOpenApiException('Use uma foto facial JPG ou PNG.');
+    }
 
-    $dir = __DIR__ . '/uploads/faces/normalized';
+    $dir = __DIR__ . '/storage/private/acquavale_faces/normalized';
     if (!is_dir($dir)) mkdir($dir, 0775, true);
-    $target = $dir . '/' . pathinfo($absolute, PATHINFO_FILENAME) . '.jpg';
+    $target = $dir . '/' . hash('sha256', $absolute . 'v2') . '.jpg';
     if (is_file($target) && filemtime($target) >= filemtime($absolute) && filesize($target) > 0) return $target;
 
     $cmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File ' .

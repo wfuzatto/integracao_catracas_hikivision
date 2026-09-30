@@ -1,7 +1,19 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/hcp.php';
+require_once __DIR__ . '/delivery_report.php';
 ensure_visitor_flow_column();
+
+function visitor_ensure_photo_update_column(): void {
+    static $ready = false;
+    if ($ready) return;
+    $st = db()->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='reservations' AND COLUMN_NAME='hcp_photo_update_pending'");
+    if (!(int)$st->fetchColumn()) {
+        try { db()->exec('ALTER TABLE reservations ADD COLUMN hcp_photo_update_pending TINYINT NOT NULL DEFAULT 0'); }
+        catch (PDOException $e) { if ((int)($e->errorInfo[1] ?? 0) !== 1060) throw $e; }
+    }
+    $ready = true;
+}
 
 function visitor_reservation(int $id): array {
     $st = db()->prepare('SELECT r.*, g.name group_name, a.name access_name FROM reservations r LEFT JOIN guest_groups g ON g.id=r.group_id LEFT JOIN access_levels a ON a.id=r.access_level_id WHERE r.id=?');
@@ -88,42 +100,14 @@ function visitor_save_registration_result(int $id, array $data): void {
 
 function visitor_delivery_report(HcpOpenApiClient $client, array $r, array $level): array {
     $data = $client->request('/artemis/api/visitor/v1/person/ID/elementDownloadDetail', ['id'=>(string)$r['hcp_visitor_id']])['data'] ?? [];
-    $details = is_array($data['ElementDetailList'] ?? null) ? ($data['ElementDetailList']['ElementDetail'] ?? []) : [];
-    $indexed = [];
-    foreach ($details as $detail) $indexed[(string)($detail['elementID'] ?? $detail['ID'] ?? '')] = $detail;
-    $doors = [];
-    foreach ($level['ElementList'] as $entry) {
-        $element = $entry['Element'];
-        $id = (string)$element['ID'];
-        $detail = $indexed[$id] ?? [];
-        $status = $detail['ElementStatus'][0]['elementStatus'] ?? null;
-        $certs = $detail['CertificateStatusList']['CertificateStatus'] ?? [];
-        $faceOk = false; $credentialOk = false; $failed = $status !== null && (int)$status === 2; $allOk = $certs !== [];
-        $safeCerts = [];
-        foreach ($certs as $cert) {
-            $type = (int)($cert['type'] ?? -1);
-            $cs = (int)($cert['status'] ?? -1);
-            if ($type===2 && $cs===0) $faceOk=true;
-            if (in_array($type,[0,4],true) && $cs===0) $credentialOk=true;
-            if ($cs===2) $failed=true;
-            if ($cs!==0) $allOk=false;
-            $safeCerts[]=['type'=>$type,'status'=>$cs];
-        }
-        $confirmed = $status !== null && (int)$status===0 && $allOk && $credentialOk && (empty($r['photo_path']) || $faceOk);
-        $doors[]=['id'=>$id,'name'=>$element['BaseInfo']['Name'] ?? $id,
-            'state'=>$confirmed?'confirmed':($failed?'failed':'queued'),
-            'face'=>$faceOk,'credential'=>$credentialOk,'certificates'=>$safeCerts];
-    }
-    $states=array_column($doors,'state');
-    $state=!in_array('queued',$states,true)&&!in_array('failed',$states,true)?'confirmed':(in_array('failed',$states,true)?'failed':'queued');
-    $report=['state'=>$state,'segment'=>$level['privilegeGroupName'],'levelId'=>(string)$level['privilegeGroupId'],
-        'source'=>'HikCentral','checkedAt'=>date(DATE_ATOM),'doors'=>$doors];
+    $report = visitor_parse_delivery($data, $r, $level);
+    $state = $report['state'];
     $tz=new DateTimeZone('America/Sao_Paulo');
     $now=new DateTimeImmutable('now',$tz);
     $active=$state==='confirmed' && $now>=new DateTimeImmutable($r['entry_at'],$tz) && $now<=new DateTimeImmutable($r['exit_at'],$tz);
     db()->prepare('UPDATE reservations SET hcp_delivery_state=?,hcp_delivery_report=?,hcp_delivery_verified_at=?,status=?,hcp_last_error=? WHERE id=?')
         ->execute([$state,json_encode($report,JSON_UNESCAPED_UNICODE),$state==='confirmed'?$now->format('Y-m-d H:i:s'):null,
-            $active?'ACTIVE':'SENT',$state==='failed'?'HikCentral informou falha na entrega. Consulte as catracas abaixo.':null,$r['id']]);
+            $active?'ACTIVE':'SENT',$state==='failed'?$report['message']:null,$r['id']]);
     return $report;
 }
 
@@ -290,6 +274,7 @@ function visitor_checkout_candidates(int $limit = 50): array {
 }
 
 function visitor_sync(int $id): array {
+    visitor_ensure_photo_update_column();
     $lock=db()->prepare('SELECT GET_LOCK(?,0)');
     $lock->execute(['visitor_delivery_'.$id]);
     if ((int)$lock->fetchColumn()!==1) throw new RuntimeException('Esta reserva ja esta sendo sincronizada.');
@@ -305,9 +290,17 @@ function visitor_sync(int $id): array {
         if (empty($r['hcp_reference']) && empty($r['hcp_visitor_id'])) {
             $response=$client->createReservation($r,(string)$r['group_name'],$r['access_names']);
             visitor_save_platform_result($id,$response['data']??[]);
+            db()->prepare('UPDATE reservations SET hcp_photo_update_pending=0 WHERE id=?')->execute([$id]);
             $r=visitor_reservation($id);
         }
         if (empty($r['hcp_reference']) || empty($r['hcp_visitor_id'])) throw new RuntimeException('Identificadores incompletos no cadastro. Nao foi criada outra reserva.');
+        if (!empty($r['hcp_photo_update_pending'])) {
+            if (!empty($r['hcp_registration_id'])) throw new RuntimeException('A foto de uma visita com check-in deve ser corrigida no HikCentral.');
+            $response = $client->updateReservation($r,(string)$r['group_name'],$r['access_names'],(string)$r['hcp_reference'],(string)$r['hcp_visitor_id']);
+            $image = $response['data']['qrCodeImage'] ?? $response['data']['qRCodeImage'] ?? '';
+            $qr = $image !== '' ? hcp_save_qr_image($image, $id) : null;
+            db()->prepare('UPDATE reservations SET hcp_photo_update_pending=0,hcp_qr_image_path=COALESCE(?,hcp_qr_image_path) WHERE id=?')->execute([$qr,$id]);
+        }
         if (($r['visitor_flow_status'] ?? 'REGISTERED') === 'CHECKED_IN' && empty($r['hcp_registration_id'])) {
             $response=$client->registerReservation($r,(string)$r['group_name'],$r['access_names'],(string)$r['hcp_reference'],(string)$r['hcp_visitor_id']);
             visitor_save_registration_result($id,$response['data']??[]);
@@ -328,8 +321,20 @@ function visitor_sync(int $id): array {
             ]);
         }
         db()->prepare("UPDATE reservations SET hcp_assigned_level_id=?,hcp_delivery_state='queued' WHERE id=?")->execute([implode(',',$levelIds),$id]);
-        $client->reapplyVisitorAccess((string)$r['hcp_visitor_id'],$doors);
-        return visitor_delivery_report($client,$r,$level);
+        $reapplyError = null;
+        try {
+            $client->reapplyVisitorAccess((string)$r['hcp_visitor_id'],$doors);
+        } catch (HcpOpenApiException $e) {
+            // Reapplication can fail for a reserved visitor. Consult actual delivery.
+            $reapplyError = $e->getMessage();
+        }
+        $report = visitor_delivery_report($client,$r,$level);
+        if ($reapplyError !== null) {
+            $report['reapplicationError'] = $reapplyError;
+            db()->prepare('UPDATE reservations SET hcp_delivery_report=? WHERE id=?')
+                ->execute([json_encode($report,JSON_UNESCAPED_UNICODE),$id]);
+        }
+        return $report;
     } catch (Throwable $e) {
         db()->prepare("UPDATE reservations SET hcp_last_error=?,hcp_delivery_state='failed' WHERE id=?")->execute([$e->getMessage(),$id]);
         throw $e;

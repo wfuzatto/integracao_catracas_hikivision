@@ -228,6 +228,21 @@ function aqv_download_photo(string $url, string $ticketCode): array
     if (!is_array($parts) || !in_array(strtolower((string)($parts['scheme'] ?? '')), ['http','https'], true)) {
         throw new RuntimeException('URL de foto inválida.');
     }
+    $origin = parse_url(AQV_WEB_BASE_URL);
+    if (strtolower((string)($parts['host'] ?? '')) !== strtolower((string)($origin['host'] ?? ''))
+        || isset($parts['user']) || isset($parts['pass'])) {
+        throw new RuntimeException('A foto deve ser obtida no servidor configurado da loja.');
+    }
+    // Older claims contain HTTP URLs; upgrade before sending the API key.
+    if (($origin['scheme'] ?? '') === 'https' && ($parts['scheme'] ?? '') === 'http' && !isset($parts['port'])) {
+        $url = 'https:' . substr($url, 5);
+        $parts = parse_url($url);
+    }
+    if (($parts['scheme'] ?? '') !== ($origin['scheme'] ?? '')
+        || (int)($parts['port'] ?? (($parts['scheme'] ?? '') === 'https' ? 443 : 80))
+        !== (int)($origin['port'] ?? (($origin['scheme'] ?? '') === 'https' ? 443 : 80))) {
+        throw new RuntimeException('Origem da foto diferente da loja configurada.');
+    }
 
     $ch = curl_init($url);
     curl_setopt_array($ch, [
@@ -381,6 +396,18 @@ function aqv_callback_ticket(array $importOrder, array $importTicket, string $st
         $st->execute([(int)$importTicket['local_reservation_id']]);
         $reservation = $st->fetch() ?: null;
     }
+    if ($state === 'confirmed' && $reservation && $report) {
+        $root = realpath(__DIR__ . '/uploads/qr');
+        $path = realpath(__DIR__ . '/' . ($reservation['hcp_qr_image_path'] ?? ''));
+        if ($root && $path && str_starts_with($path, $root . DIRECTORY_SEPARATOR)
+            && is_file($path) && filesize($path) <= 524288) {
+            $info = @getimagesize($path);
+            if (($info['mime'] ?? '') === 'image/png') {
+                $report['access_credential'] = ['source'=>'HikCentral',
+                    'qr_image'=>'data:image/png;base64,' . base64_encode((string)file_get_contents($path))];
+            }
+        }
+    }
     aqv_site_post('sale-ticket-status', [
         'consumer' => $importOrder['consumer'] ?: 'vale-visitor',
         'order_code' => $importOrder['order_code'],
@@ -409,10 +436,14 @@ function aqv_process_ticket(int $ticketId): array
 
     try {
         $pdo->prepare("UPDATE acquavale_import_tickets SET state='processing',attempt_count=attempt_count+1,last_attempt_at=NOW(),last_error=NULL,updated_at=NOW() WHERE id=?")->execute([$ticketId]);
-        aqv_callback_ticket($row, $row, 'syncing', null, 'Vale Visitor iniciou o processamento.');
+        // Reporting a transient/stale claim must not prevent the visitor from
+        // being created and delivered to HikCentral. Final status is retried
+        // from aqv_finalize_order after sale-next renews the claim.
+        try { aqv_callback_ticket($row, $row, 'syncing', null, 'Vale Visitor iniciou o processamento.'); }
+        catch (Throwable) {}
 
         $photoPath = (string)($row['photo_path'] ?? '');
-        if ($photoPath === '') {
+        if ($photoPath === '' || !is_file(__DIR__ . '/' . $photoPath)) {
             $photo = aqv_download_photo((string)($ticket['photo_url'] ?? ''), (string)$row['ticket_code']);
             $photoPath = $photo['path'];
             $pdo->prepare("UPDATE acquavale_import_tickets SET photo_path=?,photo_sha256=?,photo_mime_type=?,photo_size=?,state='photo_saved',updated_at=NOW() WHERE id=?")
@@ -429,13 +460,21 @@ function aqv_process_ticket(int $ticketId): array
         $state = (string)($report['state'] ?? 'queued');
         $mappedState = $state === 'confirmed' ? 'confirmed' : ($state === 'failed' ? 'failed' : 'syncing');
         $pdo->prepare("UPDATE acquavale_import_tickets SET state=?,hcp_delivery_report=?,confirmed_at=IF(?='confirmed',NOW(),confirmed_at),last_error=?,updated_at=NOW() WHERE id=?")
-            ->execute([$mappedState,json_encode($report,JSON_UNESCAPED_UNICODE),$mappedState,$mappedState==='failed'?'HikCentral informou falha na entrega.':null,$ticketId]);
+            ->execute([$mappedState,json_encode($report,JSON_UNESCAPED_UNICODE),$mappedState,$mappedState==='failed'?$report['message']:null,$ticketId]);
         $st = $pdo->prepare('SELECT * FROM acquavale_import_tickets WHERE id=?'); $st->execute([$ticketId]); $fresh = $st->fetch();
-        aqv_callback_ticket($row, $fresh, $mappedState, $report, $mappedState==='confirmed'?'HikCentral confirmou face e credenciais.':'Aguardando confirmação do HikCentral.');
+        // The HikCentral delivery state is authoritative. A stale store claim
+        // must not turn a queued/confirmed visitor into a local failure; the
+        // callback and ACK can be retried after sale-next renews the claim.
+        try { aqv_callback_ticket($row, $fresh, $mappedState, $report, $report['message'] ?? 'Aguardando confirmação do HikCentral.'); }
+        catch (Throwable) {}
         return ['state'=>$mappedState,'ticket_code'=>$row['ticket_code'],'report'=>$report];
     } catch (Throwable $e) {
-        $pdo->prepare("UPDATE acquavale_import_tickets SET state='failed',last_error=?,updated_at=NOW() WHERE id=?")->execute([mb_substr($e->getMessage(),0,2000),$ticketId]);
-        try { aqv_callback_ticket($row, $row, 'failed', null, $e->getMessage()); } catch (Throwable) {}
+        $pdo->prepare("UPDATE acquavale_import_tickets SET state=IF(state IN ('confirmed','acked'),state,'failed'),last_error=?,updated_at=NOW() WHERE id=?")
+            ->execute([mb_substr($e->getMessage(),0,2000),$ticketId]);
+        $st = $pdo->prepare('SELECT * FROM acquavale_import_tickets WHERE id=?');
+        $st->execute([$ticketId]); $fresh = $st->fetch() ?: $row;
+        $savedReport = json_decode((string)($fresh['hcp_delivery_report'] ?? ''), true);
+        try { aqv_callback_ticket($row, $fresh, 'failed', is_array($savedReport) ? $savedReport : null, $e->getMessage()); } catch (Throwable) {}
         throw $e;
     }
 }
@@ -451,6 +490,16 @@ function aqv_finalize_order(int $importOrderId): array
     $total = (int)$counts['total']; $confirmed = (int)$counts['confirmed'];
     if ($total < 1 || $confirmed !== $total) return ['acked'=>false,'confirmed'=>$confirmed,'total'=>$total];
 
+    // Repost confirmations before ACK, including after a renewed claim.
+    $st = $pdo->prepare("SELECT * FROM acquavale_import_tickets WHERE import_order_id=? AND state IN ('confirmed','acked')");
+    $st->execute([$importOrderId]);
+    foreach ($st->fetchAll() as $ticket) {
+        $report = json_decode((string)($ticket['hcp_delivery_report'] ?? ''), true);
+        if (!is_array($report) || ($report['state'] ?? '') !== 'confirmed') {
+            throw new RuntimeException('Confirmacao local sem relatorio de entrega; consulte as catracas novamente.');
+        }
+        aqv_callback_ticket($order, $ticket, 'confirmed', $report, $report['message'] ?? 'Entrega confirmada.');
+    }
     aqv_site_post('sale-ack', [
         'consumer' => $order['consumer'] ?: 'vale-visitor',
         'order_code' => $order['order_code'],
@@ -474,7 +523,13 @@ function aqv_process_order(int $importOrderId): array
         $results=[];
         $errors=[];
         foreach ($st->fetchAll() as $ticket) {
-            try { $results[] = aqv_process_ticket((int)$ticket['id']); }
+            try {
+                $result = aqv_process_ticket((int)$ticket['id']);
+                $results[] = $result;
+                if ($result['state'] === 'failed') {
+                    $errors[] = ['ticket_id'=>(int)$ticket['id'],'error'=>$result['report']['message'] ?? 'Falha na entrega nas catracas.'];
+                }
+            }
             catch (Throwable $e) {
                 $errors[]=['ticket_id'=>(int)$ticket['id'],'error'=>$e->getMessage()];
                 $results[]=['state'=>'failed','error'=>$e->getMessage()];
@@ -493,7 +548,9 @@ function aqv_process_order(int $importOrderId): array
 function aqv_process_pending(int $limit = 20): array
 {
     $limit = max(1,min(100,$limit));
-    $rows = db()->query("SELECT id FROM acquavale_import_orders WHERE state IN ('received','processing','failed') ORDER BY COALESCE(last_attempt_at,'1970-01-01'),id LIMIT {$limit}")->fetchAll();
+    $rows = db()->query("SELECT id FROM acquavale_import_orders WHERE state IN ('received','processing','failed')
+        AND (state<>'failed' OR last_attempt_at IS NULL OR last_attempt_at<=DATE_SUB(NOW(),INTERVAL 1 MINUTE))
+        ORDER BY COALESCE(last_attempt_at,'1970-01-01'),id LIMIT {$limit}")->fetchAll();
     $result=['processed'=>0,'acked'=>0,'errors'=>[]];
     foreach ($rows as $row) {
         $result['processed']++;

@@ -76,7 +76,7 @@ Aplique `migrations/20260922_acquavale_sales_bridge.sql` em instalações existe
 powershell -ExecutionPolicy Bypass -File C:\xampp\htdocs\visitor\scripts\install_acquavale_task.ps1
 ```
 
-A tarefa `ValeVisitor-AcquaValeSync` roda a cada minuto e pode coexistir com o coletor de auto-checkout, que tem responsabilidade diferente. O instalador usa o usuário atual, sem exigir administrador; esse usuário precisa estar conectado ao Windows. O processo roda com a janela oculta. O resultado da última execução fica em `storage/logs/acquavale-worker-last.json` e os erros PHP em `storage/logs/acquavale-worker-last-error.log`.
+A tarefa `ValeVisitor-AcquaValeSync` roda a cada minuto e pode coexistir com o coletor de auto-checkout, que tem responsabilidade diferente. O instalador usa o usuário atual, sem exigir administrador; esse usuário precisa estar conectado ao Windows. A tarefa inicia diretamente `php-win.exe`, o PHP do Windows sem janela de console. O resultado da última execução fica em `storage/logs/acquavale-worker-last.json`.
 
 O worker e o botão **Sincronizar agora** também consultam `sale-next` na loja configurada antes de processar os pedidos locais. Isso recupera vendas quando o webhook não chega ao servidor, sem exigir uma conexão de entrada pela internet. Configure a URL e a API key da **loja de produção**, não da cópia local. Pedidos já marcados como `claimed` ficam disponíveis após o prazo de claim da loja (normalmente 10 minutos). Reenvios usam o mesmo código de ingresso e não criam outra reserva. A falha na consulta da loja é exibida na tela e não impede o processamento de pedidos já recebidos.
 

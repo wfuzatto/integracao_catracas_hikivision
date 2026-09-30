@@ -16,7 +16,13 @@ function db(): PDO {
 
 function e(?string $value): string { return htmlspecialchars($value ?? '', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 function csrf_token(): string { if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(24)); return $_SESSION['csrf']; }
-function csrf_check(): void { if (!hash_equals($_SESSION['csrf'] ?? '', $_POST['csrf'] ?? '')) { http_response_code(419); exit('Sessão expirada. Volte e tente novamente.'); } }
+function csrf_check(): void {
+    $expected = $_SESSION['csrf'] ?? null;
+    $received = $_POST['csrf'] ?? null;
+    if (!is_string($expected) || $expected === '' || !is_string($received) || !hash_equals($expected, $received)) {
+        http_response_code(403); exit('Sessão expirada. Volte e tente novamente.');
+    }
+}
 function redirect(string $path): never { header('Location: ' . $path); exit; }
 function flash(?string $message = null, string $type = 'success'): ?array {
     if ($message !== null) { $_SESSION['flash'] = ['message' => $message, 'type' => $type]; return null; }
@@ -29,6 +35,19 @@ function dt_db(string $value): string {
 }
 function dt_input(?string $value): string { return $value ? date('Y-m-d\TH:i', strtotime($value)) : ''; }
 function iso8601(string $value): string { return (new DateTime($value, new DateTimeZone('America/Sao_Paulo')))->format('Y-m-d\TH:i:sP'); }
+function reservation_face_photo_file(?string $relativePath): ?string {
+    $relativePath = str_replace('\\', '/', trim((string)$relativePath));
+    $expectedPrefix = 'storage/private/acquavale_faces/';
+    if (!str_starts_with($relativePath, $expectedPrefix) || str_contains($relativePath, "\0")) return null;
+    $root = realpath(__DIR__ . '/storage/private/acquavale_faces');
+    $file = realpath(__DIR__ . '/' . $relativePath);
+    if ($root === false || $file === false || !is_file($file)) return null;
+    $rootPrefix = rtrim($root, '/\\') . DIRECTORY_SEPARATOR;
+    $insideRoot = PHP_OS_FAMILY === 'Windows'
+        ? strncasecmp($file, $rootPrefix, strlen($rootPrefix)) === 0
+        : str_starts_with($file, $rootPrefix);
+    return $insideRoot ? $file : null;
+}
 function status_label(string $status): string { return ['PENDING'=>'Pendente','SENT'=>'Enviado ao HikCentral','ACTIVE'=>'Credencial ativa','ERROR'=>'Erro na integração','CANCELLED'=>'Cancelado'][$status] ?? $status; }
 function status_class(string $status): string { return strtolower($status); }
 function visitor_flow_label(?string $status): string { return ($status ?? 'REGISTERED') === 'CHECKED_IN' ? 'Check-in imediato' : 'Apenas cadastrado'; }
