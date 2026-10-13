@@ -19,3 +19,6 @@ putenv('VALE_AQV_WEB_TLS_VERIFY=1');
 putenv('VALE_AQV_SIGNATURE_MAX_SKEW=300');
 putenv('VALE_AQV_PROCESS_ON_RECEIVE=0');
 // putenv('VALE_AQV_MAX_PHOTO_BYTES=10485760');
+
+// Controle de catracas: gero hash com PHP password_hash antes de habilitar.
+// putenv('VALE_HCP_DOOR_CONTROL_PASSWORD_HASH=HASH_GERADO_NO_XAMPP');
