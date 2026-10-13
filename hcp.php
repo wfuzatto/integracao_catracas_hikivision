@@ -373,6 +373,45 @@ final class HcpOpenApiClient
         return $matches[0];
     }
 
+
+    /** Lista os pontos de acesso reais cadastrados na OpenAPI, com paginacao. */
+    public function listAccessDoors(): array
+    {
+        $result = [];
+        for ($page = 1; $page <= 50; ++$page) {
+            $response = $this->request('/artemis/api/resource/v1/acsDoor/acsDoorList', [
+                'pageNo' => $page,
+                'pageSize' => 200,
+            ]);
+            $data = $response['data'] ?? null;
+            if (!is_array($data) || !isset($data['list']) || !is_array($data['list'])) {
+                throw new HcpOpenApiException('A lista de catracas veio em formato inesperado da OpenAPI.');
+            }
+            foreach ($data['list'] as $door) {
+                if (!is_array($door) || empty($door['doorIndexCode'])) continue;
+                $result[(string)$door['doorIndexCode']] = $door;
+            }
+            if (count($data['list']) < 200 || count($result) >= (int)($data['total'] ?? PHP_INT_MAX)) {
+                uasort($result, static fn($a, $b) => strnatcasecmp((string)($a['doorName'] ?? ''), (string)($b['doorName'] ?? '')));
+                return $result;
+            }
+        }
+        throw new HcpOpenApiException('Limite da listagem de catracas excedido; nao e seguro exibir lista incompleta.');
+    }
+
+    /** controlType=0: manter aberta; controlType=1: fechar e voltar ao acesso por credencial. */
+    public function controlAccessDoor(string $doorId, int $direction, bool $remainOpen): array
+    {
+        if ($doorId === '' || strlen($doorId) > 64 || !in_array($direction, [0, 1], true)) {
+            throw new InvalidArgumentException('Catraca ou sentido invalido.');
+        }
+        return $this->request('/artemis/api/acs/v1/door/doControl', [
+            'doorIndexCodes' => [$doorId],
+            'controlType' => $remainOpen ? 0 : 1,
+            'controlDirection' => $direction,
+        ]);
+    }
+
     public function reapplyVisitorAccess(string $visitorId, array $doorIds): array
     {
         if ($visitorId === '' || !$doorIds) throw new HcpOpenApiException('Visitante e catracas de destino obrigatorios.');
