@@ -12,9 +12,11 @@ function door_control_status(array $door, int $direction, ?array $stored = null,
     $key = $direction === 0 ? 'doorState' : 'doorOutState';
     $hasLive = isset($door[$key]) && is_numeric($door[$key]) && in_array((int)$door[$key], [0, 1, 2, 3, 4], true);
     $live = $hasLive ? (int)$door[$key] : null;
-    $recentStored = $stored !== null && isset($stored['last_action_at'])
-        && ($now ?? time()) - (strtotime((string)$stored['last_action_at']) ?: 0) >= 0
-        && ($now ?? time()) - (strtotime((string)$stored['last_action_at']) ?: 0) < 20;
+    // UNIX_TIMESTAMP() evita divergencia entre timezone do MySQL e do PHP.
+    $changedAt = isset($stored['last_action_ts']) ? (int)$stored['last_action_ts']
+        : (isset($stored['last_action_at']) ? (strtotime((string)$stored['last_action_at']) ?: 0) : 0);
+    $age = ($now ?? time()) - $changedAt;
+    $recentStored = $stored !== null && $changedAt > 0 && $age >= 0 && $age < 20;
     $free = $recentStored ? (bool)$stored['free_passage']
         : ($hasLive && $live !== 4 ? $live === 0 : (bool)($stored['free_passage'] ?? false));
 
