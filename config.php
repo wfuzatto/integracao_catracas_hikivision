@@ -35,4 +35,8 @@ define('AQV_SIGNATURE_MAX_SKEW_SECONDS', max(60, (int)(getenv('VALE_AQV_SIGNATUR
 define('AQV_PROCESS_ON_RECEIVE', getenv('VALE_AQV_PROCESS_ON_RECEIVE') === '1');
 define('AQV_MAX_PHOTO_BYTES', max(1024 * 1024, (int)(getenv('VALE_AQV_MAX_PHOTO_BYTES') ?: 10 * 1024 * 1024)));
 
+// Senha exclusiva para o controle manual de catracas. Use password_hash(..., PASSWORD_DEFAULT).
+// Sem o hash, o recurso nao pode enviar comandos de abertura.
+define('HCP_DOOR_CONTROL_PASSWORD_HASH', getenv('VALE_HCP_DOOR_CONTROL_PASSWORD_HASH') ?: '');
+
 date_default_timezone_set('America/Sao_Paulo');
