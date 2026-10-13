@@ -85,3 +85,33 @@ Teste de regressão local, sem chamadas à loja ou ao HikCentral: `C:\xampp\php\
 ### Firewall
 
 Não exponha o HikCentral. Publique somente `acquavale_receive.php` em HTTPS no Vale Visitor. Recomenda-se TCP 443; se a WAN 443 estiver ocupada, use por exemplo TCP 8443 externo com NAT para TCP 443 interno. Restrinja as demais páginas à LAN sempre que possível.
+
+## Controle manual de catracas — passagem livre (13/10/2026)
+
+A pagina **Catracas** no menu do Vale Visitor abre um seletor de pontos de acesso retornados pela OpenAPI do HikCentral.
+
+- Selecione a catraca e o sentido **Entrada**, **Saida** ou **Entrada e saida** (somente quando o dispositivo aceitar os dois sentidos).
+- **LIBERAR** chama `POST /artemis/api/acs/v1/door/doControl` com `controlType=0` (*remain open*), mantendo passagem livre ate comando contrario.
+- Apos o sucesso, o botao passa a **FECHAR**, com `controlType=1` (*close/lock, access with credential*). **Nao** usa `controlType=3` (*remain closed*), que impediria o acesso normal ate de visitantes autorizados.
+- O `controlDirection=0` refere-se a entrada; `1` refere-se a saida. Em ambos os sentidos o sistema realiza uma chamada para cada sentido, guarda o resultado de cada chamada e nao oculta falhas parciais.
+- O seletor reflete o `doorState` e `doorOutState` fornecidos pelo HikCentral, usando o ultimo comando registrado como fallback. Nos primeiros 20 segundos apos um comando aceita-se o estado local enquanto o dispositivo atualiza sua leitura.
+- Comandos persistem em `door_control_states` e sao auditados em `door_control_audit`. Essas tabelas sao criadas ao abrir o painel pela primeira vez; a migration equivalente fica em `migrations/20261013_door_control.sql`.
+- O botao e desabilitado quando o HikCentral informa dispositivo offline. Somente pontos retornados pela propria OpenAPI podem receber comandos. Os formularios usam CSRF, limite de tentativas de login e bloqueio da sessao apos uma hora.
+
+**Habilitacao obrigatoria:** configure no `config.local.php` (fora do Git) o hash de uma senha forte e exclusiva para controle fisico:
+
+```powershell
+C:\xampp\php\php.exe -r "echo password_hash('SENHA_FORTE_AQUI', PASSWORD_DEFAULT), PHP_EOL;"
+```
+
+```php
+putenv('VALE_HCP_DOOR_CONTROL_PASSWORD_HASH=COLE_AQUI_O_HASH_GERADO');
+```
+
+Autorize na aplicacao OpenAPI do HikCentral **consulta de pontos de acesso**
+(`POST /artemis/api/resource/v1/acsDoor/acsDoorList`) e **controle de porta**
+(`POST /artemis/api/acs/v1/door/doControl`). E necessario que o hardware aceite o modo permanente no sentido selecionado. O estado retornado pela API ou gravado no banco nao comprova, por si so, uma passagem fisica: confirme o funcionamento nas catracas em campo.
+
+**Seguranca:** mantenha o painel restrito a rede interna, via HTTPS/VPN, e nunca publique esse controle na internet. Mantenha um operador responsavel e encerre toda passagem livre ao finalizar. Caso o lado de entrada abra mas o lado de saida recuse, o sistema indica sucesso parcial — feche o lado liberado antes de sair.
+
+Teste de logica offline: `php scripts/test_door_control.php`.
