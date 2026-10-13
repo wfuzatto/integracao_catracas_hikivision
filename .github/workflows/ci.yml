@@ -16,6 +16,8 @@ jobs:
           extensions: curl, pdo_mysql, fileinfo
       - name: Lint PHP
         run: find . -type f -name '*.php' ! -name 'config.local.php' -print0 | xargs -0 -n1 php -l
+      - name: Test door control logic
+        run: php scripts/test_door_control.php
       - name: Verify AcquaVale bridge files
         run: |
           test -f acquavale.php
