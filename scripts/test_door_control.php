@@ -11,6 +11,7 @@ ok(door_control_status(['doorState'=>4], 0)['offline'], 'Offline');
 ok(door_control_status(['doorState'=>1], 0, ['free_passage'=>1,'last_action_at'=>date('Y-m-d H:i:s')])['free'], 'Comando recente');
 ok(door_control_status(['doorState'=>1], 0, ['free_passage'=>1,'last_action_at'=>'2020-01-01 00:00:00'])['free'] === false, 'Consulta HikCentral prevalece');
 ok(door_control_directions('both') === [0,1], 'Ambos sentidos');
+ok(door_control_status(['doorState'=>1], 0, ['free_passage'=>1,'last_action_ts'=>time()])['free'], 'Timestamp UTC do banco');
 door_control_check_result(['data'=>[[['doorIndexCode'=>'abc','controlResultCode'=>0]]]], 'abc');
 try {
     door_control_check_result(['data'=>[['doorIndexCode'=>'abc','controlResultCode'=>15,'controlResultDesc'=>'Falhou']]], 'abc');
