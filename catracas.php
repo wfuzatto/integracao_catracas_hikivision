@@ -45,7 +45,7 @@ function door_control_log(string $id, string $name, int $direction, string $acti
 
 function door_control_current_rows(): array
 {
-    $rows = db()->query("SELECT door_index_code, direction, free_passage, last_action_at FROM door_control_states")->fetchAll();
+    $rows = db()->query("SELECT door_index_code, direction, free_passage, last_action_at, UNIX_TIMESTAMP(last_action_at) AS last_action_ts FROM door_control_states")->fetchAll();
     $result = [];
     foreach ($rows as $row) $result[(string)$row['door_index_code']][(int)$row['direction']] = $row;
     return $result;
